@@ -1,0 +1,148 @@
+# fwdays overlay — bge-m3 embeddings backend.
+#
+# ADDITIVE. This file is new; it modifies nothing upstream. That is deliberate:
+# the course points each task at a different abox branch, and an overlay made of
+# new files merges cleanly onto any of them, whereas edits to shared files would
+# conflict on every rebase.
+#
+# WHY bge-m3 rather than the nomic-embed this branch already serves:
+# the corpus is Ukrainian, and nomic's 30,528-entry English WordPiece vocabulary
+# has no Ukrainian subwords — it falls back to single Cyrillic characters, 3.10x
+# more tokens than the equivalent English. bge-m3 uses XLM-RoBERTa's 250k vocab
+# and is 0.92x. Measured; see docs/adr/0001-embedding-model.md in the
+# fwdays-harness-engineering repo.
+#
+# Runs ALONGSIDE llama-cpp-embeddings, which is not removed: releases/llmd.yaml
+# serves the same nomic model through llm-d and would break without it.
+#
+# The llama-cpp Namespace is deliberately NOT declared here — upstream's
+# llama-cpp-embeddings.yaml already creates it, and kustomize rejects duplicate
+# resource ids. Another reason to share a namespace rather than invent one:
+# these two Deployments are the same kind of thing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bge-m3-embeddings
+  namespace: llama-cpp
+  labels:
+    app: bge-m3-embeddings
+    fwdays.overlay: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bge-m3-embeddings
+  template:
+    metadata:
+      labels:
+        app: bge-m3-embeddings
+    spec:
+      initContainers:
+        # No baked model image, unlike images/nomic-embed. That approach avoids a
+        # HuggingFace dependency at pod start but produced an amd64-only artifact.
+        # Downloading into an emptyDir keeps the stock multi-arch llama.cpp image
+        # and makes the model a manifest edit rather than an image rebuild.
+        - name: fetch-model
+          image: curlimages/curl:8.11.0
+          env:
+            - name: MODEL_URL
+              value: https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              if [ -s /models/model.gguf ]; then echo "cached"; exit 0; fi
+              curl -fL --retry 5 --retry-delay 3 --retry-connrefused \
+                   -o /models/model.gguf "$MODEL_URL"
+              SIZE=$(wc -c < /models/model.gguf)
+              echo "downloaded ${SIZE} bytes"
+              # A truncated download fails later with an opaque GGUF parse error.
+              [ "$SIZE" -gt 500000000 ] || { echo "truncated"; exit 1; }
+          volumeMounts:
+            - { name: models, mountPath: /models }
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits:   { cpu: "1",  memory: 256Mi }
+      containers:
+        - name: llama-server
+          image: ghcr.io/ggml-org/llama.cpp:server-b10920
+          imagePullPolicy: IfNotPresent
+          args:
+            - --model
+            - /models/model.gguf
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8090"
+            # Without this, /v1/embeddings returns 501.
+            - --embeddings
+            # bge-m3 is CLS-pooled. llama.cpp defaults to mean pooling, which
+            # returns plausible but subtly wrong vectors and errors nowhere.
+            - --pooling
+            - cls
+            - --ctx-size
+            - "16384"
+            # Must be >= one slot (16384/8): a pooled embedding has to fit in a
+            # single micro-batch, making this the real per-request ceiling.
+            - --ubatch-size
+            - "2048"
+            - --parallel
+            - "8"
+          ports:
+            - { containerPort: 8090, name: http }
+          startupProbe:
+            httpGet: { path: /health, port: 8090 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health, port: 8090 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8090 }
+            periodSeconds: 30
+          # Measured ~1828 MiB under load, mostly reclaimable page cache for the
+          # mmap'd 605MB GGUF. Throughput saturates at ~1.5 req/s from
+          # concurrency 2 — CPU is the constraint, not memory.
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits:   { cpu: "2",  memory: 2Gi }
+          volumeMounts:
+            - { name: models, mountPath: /models, readOnly: true }
+      volumes:
+        - name: models
+          emptyDir:
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bge-m3-embeddings
+  namespace: llama-cpp
+spec:
+  selector:
+    app: bge-m3-embeddings
+  ports:
+    - { name: http, port: 8090, targetPort: 8090, protocol: TCP }
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bge-m3-embeddings
+  namespace: llama-cpp
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-external
+      namespace: agentgateway-system
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /bge-m3 }
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: / }
+      backendRefs:
+        - name: bge-m3-embeddings
+          port: 8090

@@ -1,0 +1,128 @@
+# fwdays overlay — MCP servers for the Task 3 retrieval comparison.
+#
+# ADDITIVE. These are SIBLINGS of the upstream `qdrant-mcp` in mcp-servers.yaml,
+# not edits to it. Upstream's server keeps its nomic backend and abox-nomic
+# collection untouched.
+#
+# That is not only to avoid merge conflicts. It also makes the comparison
+# re-runnable: all arms exist at once, each with its own collection, so a
+# question can be put to any of them without redeploying anything.
+#
+#   arm A  qdrant-mcp-official   all-MiniLM-L6-v2       384d   abox-minilm
+#          in-process fastembed. The model Task 3 step 6 mandates. English-only
+#          vocabulary: tokenises Ukrainian character-by-character.
+#
+#   arm B  qdrant-mcp-e5         multilingual-e5-large  1024d  abox-e5
+#          in-process fastembed, genuinely multilingual. fastembed does NOT
+#          support bge-m3, so this is the closest available peer to arm C.
+#          KNOWN BROKEN: onnxruntime rejects the model because fastembed splits
+#          model.onnx and model.onnx_data across separately hashed blob
+#          directories and the cross-directory reference trips a path-traversal
+#          check. Kept deliberately — the failure is itself a finding about
+#          in-process embedding, and it may be fixed upstream later.
+#
+#   arm C  qdrant-mcp-bge        bge-m3                 1024d  abox-bge-m3
+#          abox's own Go server against an EXTERNAL /v1/embeddings endpoint.
+#          The production choice.
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: qdrant-mcp-official
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+    fwdays.comparison-arm: "a-minilm-inprocess"
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    # No image is published for the official server — not Docker Hub mcp/qdrant,
+    # not ghcr.io/qdrant/mcp-server-qdrant. Its Dockerfile is just
+    # `uv pip install mcp-server-qdrant`, so the stock uv image plus uvx avoids
+    # maintaining a build. Version pinned: unpinned uvx would drift between pod
+    # restarts and silently invalidate a comparison run.
+    image: ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+    cmd: uvx
+    args: ["mcp-server-qdrant==0.8.1"]
+    env:
+      QDRANT_URL: http://qdrant.qdrant:6333
+      COLLECTION_NAME: abox-minilm
+      EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      EMBEDDING_PROVIDER: fastembed
+      # fastembed caches the ONNX here; the default targets a home directory
+      # that may be read-only under kmcp's securityContext.
+      FASTEMBED_CACHE_PATH: /tmp/fastembed
+      HF_HOME: /tmp/hf
+      XDG_CACHE_HOME: /tmp/cache
+      FASTMCP_LOG_LEVEL: INFO
+    resources:
+      # abox's own notes record this server being OOMKilled at 2Gi loading the
+      # f32 nomic ONNX. all-MiniLM is ~22M params and fits comfortably.
+      requests: { cpu: 200m, memory: 512Mi }
+      limits:   { cpu: "2",  memory: 2Gi }
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: qdrant-mcp-e5
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+    fwdays.comparison-arm: "b-e5-inprocess"
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+    cmd: uvx
+    args: ["mcp-server-qdrant==0.8.1"]
+    env:
+      QDRANT_URL: http://qdrant.qdrant:6333
+      COLLECTION_NAME: abox-e5
+      # XLM-RoBERTa, 1024d, ~94 languages. Ties with bge-m3 on Ukrainian
+      # tokenisation, which is what makes it the right peer for arm C.
+      EMBEDDING_MODEL: intfloat/multilingual-e5-large
+      EMBEDDING_PROVIDER: fastembed
+      FASTEMBED_CACHE_PATH: /tmp/fastembed
+      HF_HOME: /tmp/hf
+      XDG_CACHE_HOME: /tmp/cache
+      FASTMCP_LOG_LEVEL: INFO
+    resources:
+      # ~560M params, roughly 2.2GB of ONNX — 25x arm A.
+      requests: { cpu: 200m, memory: 1Gi }
+      limits:   { cpu: "2",  memory: 4Gi }
+---
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: qdrant-mcp-bge
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+    fwdays.comparison-arm: "c-bge-m3-external"
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    # Same image as upstream qdrant-mcp. Tools are vector_store / vector_find,
+    # NOT qdrant-store / qdrant-find — the toolset difference matters to the
+    # agent's system prompt.
+    image: ghcr.io/den-vasyliev/abox/qdrant-mcp:0.4.0
+    cmd: /app/server
+    env:
+      # The external endpoint. This is the architectural difference from arms A
+      # and B: one shared model instead of a copy inside every MCP server, and
+      # any GGUF llama.cpp can serve rather than fastembed's fixed catalogue.
+      EMBEDDINGS_BASE_URL: http://bge-m3-embeddings.llama-cpp:8090
+      QDRANT_URL: http://qdrant.qdrant:6333
+      QDRANT_COLLECTION: abox-bge-m3
+      # The server defaults to nomic's "search_document: " / "search_query: "
+      # prefixes. bge-m3 needs none; leaving them prepends noise to every
+      # Ukrainian chunk and shifts the vectors.
+      EMBEDDINGS_DOCUMENT_PREFIX: ""
+      EMBEDDINGS_QUERY_PREFIX: ""
+    resources:
+      # Thin client — embedding happens in the llama.cpp pod.
+      requests: { cpu: 25m, memory: 32Mi }
+      limits:   { cpu: 500m, memory: 256Mi }

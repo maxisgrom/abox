@@ -19,7 +19,11 @@ variable "kubeconfig_path" {
 variable "oci_registry" {
   description = "OCI registry base URL"
   type        = string
-  default     = "oci://ghcr.io/den-vasyliev/abox"
+  # fwdays fork: CI publishes to the forking account's GHCR namespace, so the
+  # cluster must pull from there rather than upstream. releases_artifact below
+  # needs no change as long as the branch name still ends in "llmd-embeddings",
+  # because flux-push.yaml derives the artifact repo from the branch.
+  default = "oci://ghcr.io/maxisgrom/abox"
 }
 
 variable "releases_artifact" {

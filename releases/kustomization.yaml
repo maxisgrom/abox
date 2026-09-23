@@ -12,3 +12,9 @@ resources:
   - neo4j.yaml
   - phoenix.yaml
   - qdrant.yaml
+  # fwdays overlay — additive only, no upstream file is modified. Keeping the
+  # overlay to new files means this list is the sole merge point when the
+  # branch is rebased onto another abox feature branch.
+  - fwdays-bge-m3-embeddings.yaml
+  - fwdays-mcp-servers.yaml
+  - fwdays-agent-retrieval.yaml
