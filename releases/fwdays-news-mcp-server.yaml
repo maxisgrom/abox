@@ -1,0 +1,32 @@
+# fwdays overlay -- Task 5 follow-up: index the Ukrainian news corpus into
+# qdrant, for a direct Recall@k comparison against xray-memory's own engine on
+# the SAME corpus and the SAME embedding model.
+#
+# A sibling of qdrant-mcp-bge (releases/fwdays-mcp-servers.yaml), not the same
+# server: that one's collection (abox-bge-m3) already holds the Task 3/4
+# glossary corpus, and re-indexing this corpus into it would mix two unrelated
+# corpora's vectors together. Same model, same embeddings backend, only the
+# collection differs.
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: qdrant-mcp-news
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+    fwdays.comparison-arm: "f-news-bge-m3"
+spec:
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    image: ghcr.io/den-vasyliev/abox/qdrant-mcp:0.4.0
+    cmd: /app/server
+    env:
+      EMBEDDINGS_BASE_URL: http://bge-m3-embeddings.llama-cpp:8090
+      QDRANT_URL: http://qdrant.qdrant:6333
+      QDRANT_COLLECTION: abox-news-bge-m3
+      EMBEDDINGS_DOCUMENT_PREFIX: ""
+      EMBEDDINGS_QUERY_PREFIX: ""
+    resources:
+      requests: { cpu: 25m, memory: 32Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
