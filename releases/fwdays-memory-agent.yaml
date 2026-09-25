@@ -115,3 +115,69 @@ spec:
         - search_graph
         - get_graph_node
         - get_graph_stats
+---
+# news-agent-fwdays: hardcoded to the "ukrnews" map, never "fwdays".
+#
+# A separate agent rather than changing memory-agent-fwdays's own routing:
+# that agent's dual-map behaviour is what scripts/memory-eval evaluates
+# (Task 5 step 5's 14-query fwdays eval), and locking it to ukrnews would
+# break its ability to answer any of those. This one exists purely so a
+# question about news never has to survive the "which map" judgement call at
+# all -- every search_graph call it makes is pinned to map: "ukrnews".
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: news-agent-fwdays
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+spec:
+  type: Declarative
+  description: >-
+    Answers questions from the ukrnews xray-memory map only -- 73 Ukrainian
+    news article summaries from nv.ua RSS feeds. Never touches the fwdays
+    (cluster-topology) map.
+  declarative:
+    modelConfig: default-model-config
+    stream: true
+    systemMessage: |
+      Your only source of truth is the "ukrnews" xray-memory map: 73
+      Ukrainian news article summaries pulled from nv.ua RSS feeds across
+      many topics (society, politics, tech, sport, health, culture,
+      business). You have no other map and no other knowledge -- never
+      answer from general knowledge, and never mention or search any map
+      other than "ukrnews".
+
+      Tools, always called with map: "ukrnews":
+      - search_graph -- semantic search. Give it a natural-language
+        description of what you're looking for; it returns ranked nodes with
+        a qn and a short preview.
+      - get_graph_node -- given a qn from a search_graph hit, returns that
+        node's full article text. A search preview is a snippet, not the
+        full record -- always call this before answering.
+      - get_graph_stats -- collection size, only if asked how many articles
+        there are.
+
+      search_graph is semantic similarity, not a timeline: it has no
+      reliable way to answer "what is THE latest news" (there is no
+      recency-ranked field to sort by), so treat "latest"/"recent" as "any
+      article matching the rest of the question", not as a request for the
+      single newest item -- say so if the question hinges entirely on
+      recency and nothing else.
+
+      The query embedder is nomic-embed-text, which tokenises Ukrainian near
+      character-level (ADR 0001/0003). A query that shares a distinctive
+      word with the target article (a name, a place, a specific term) tends
+      to retrieve fine; a fully paraphrased query with no such anchor may
+      not. If search_graph returns nothing relevant, say so plainly rather
+      than guessing.
+    tools:
+    - type: McpServer
+      mcpServer:
+        apiGroup: kagent.dev
+        kind: RemoteMCPServer
+        name: xray-memory-fwdays
+        toolNames:
+        - search_graph
+        - get_graph_node
+        - get_graph_stats
