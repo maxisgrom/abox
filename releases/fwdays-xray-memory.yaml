@@ -4,18 +4,44 @@
 # patch of anything upstream ships (upstream's own releases/xray-memory.yaml,
 # on the feat/xray-memory branch, is not merged here).
 #
-# source=image, not pvc: this cluster has no CGO build of xray-memory (the
-# public images ship without Tree-sitter -- `recall snapshot: this build has
-# no Tree-sitter parser`) and no access to the private source repo, so there is
-# nothing to parse live and nothing that needs `remember`/update_code_graph
-# writes yet. The chart REQUIRES writable=false with source=image, which is
-# fine for a read-only corpus: no PVC, no seed initContainer, no age key.
-#
-# The map itself (fwdays.graph.gob.gz) is NOT parsed from source. It's built
-# with `xray-memory servicemap` from corpus/fwdays-service-graph.json -- a
-# hand-authored description of THIS cluster's own agents, MCP servers,
-# embeddings backends and stores, embedded through llama-cpp-embeddings and
+# The maps (fwdays.graph.gob.gz, ukrnews.graph.gob.gz) are NOT parsed from
+# source. Both are built with `xray-memory servicemap` from
+# corpus/fwdays-service-graph.json and corpus/fwdays-news-corpus.json --
 # packaged as images/xray-memory-maps-fwdays. See corpus/README.md to rebuild.
+#
+# 2026-09-26: writable, on a seeded claim (Task 5 optional: an avatar with a
+# full remember/recall/forget cycle, and a voice agent delegating over A2A).
+# Follows upstream's own feat/xray-memory branch almost exactly (commit
+# 8838eb2, "let xray-memory write, on a seeded claim"): server.writable=true
+# is refused outright against snapshots.source=image, because an image volume
+# is a read-only mount and nothing written there lands anywhere. The maps
+# move to a PVC instead, seeded ONCE from the existing maps image by an
+# initContainer (seed.enabled; overwrite stays the chart default of false, so
+# a redeploy can never erase a worked copy or a note remember wrote).
+# `remember`/`recall`/`forget` write into a NEW map, server.memoryMap (chart
+# default "session") -- NOT into fwdays or ukrnews, so nothing this writes can
+# touch the corpus ADR 0004 already measured and scored.
+#
+# Chart bumped 0.6.0 -> 0.7.0 to pick up server.auth: writable mode means
+# /mcp accepts writes, and every endpoint here was unauthenticated before
+# this. Upstream added bearer auth in the very next commit for the same
+# reason ("other workloads share the cluster") -- this cluster is
+# single-tenant, but the reasoning still applies since the write path is now
+# real. Token lives in the xray-memory-auth Secret, created directly with
+# kubectl (not through a manifest):
+#
+#   kubectl -n xray-memory create secret generic xray-memory-auth \
+#     --from-literal=token=$(openssl rand -hex 32)
+#
+# Any client calling this now needs "Authorization: Bearer <token>". kagent's
+# RemoteMCPServer CRD supports this natively via
+# spec.headersFrom[].valueFrom.Secret -- no flat-map-env limitation like the
+# MCPServer CRD has, because RemoteMCPServer is a client pointing at an
+# external server, not something kagent spawns and configures itself.
+#
+# encryption stays disabled, same reasoning as before: nothing in
+# fwdays.graph.gob.gz, ukrnews.graph.gob.gz or the new session notes is
+# sensitive -- public lab topology, public news summaries, lab test notes.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -30,7 +56,7 @@ spec:
   interval: 1h
   url: oci://ghcr.io/den-vasyliev/abox/charts/xray-memory
   ref:
-    tag: "0.6.0"
+    tag: "0.7.0"
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -50,29 +76,33 @@ spec:
     createNamespace: true
   values:
     server:
-      writable: false
+      writable: true
+      # Bearer token on every route but /healthz (the probe path). Secret
+      # created out of band, see the header comment above.
+      auth:
+        enabled: true
+        secretName: xray-memory-auth
 
     snapshots:
-      source: image
-      image:
-        repository: ghcr.io/maxisgrom/abox/xray-memory-maps-fwdays
-        # 2026-09-25b added a second map, ukrnews (73 Ukrainian news articles
-        # from nv.ua RSS feeds) alongside fwdays (this cluster's own service
-        # graph) -- a Task 5 follow-up comparing xray-memory's own engine
-        # against qdrant+bge-m3 (qdrant-mcp-news) on the SAME corpus.
-        #
-        # 2026-09-25c rebuilds both: the corpus JSON used "summary" as the
-        # per-node key, but servicemap's actual schema is {name, calls,
-        # called_by, description} -- Go's json.Unmarshal silently drops
-        # unknown fields, so every node's real text was never embedded NOR
-        # stored, only an auto-synthesized "Service X. Calls: ... Called by:
-        # ..." sentence. get_graph_node returning no real content on a live
-        # query is what surfaced this. See corpus/README.md.
-        tag: "2026-09-25c"
+      # pvc, not image: an image volume is read-only and the chart refuses
+      # writable=true against it outright. KinD's local-path provisioner is
+      # the default StorageClass; size/accessModes are chart defaults
+      # (5Gi, RWO).
+      source: pvc
+      seed:
+        # Seeds a FRESH claim from the existing maps image, once. The
+        # initContainer copies every *.graph.gob.gz the volume doesn't
+        # already hold; overwrite stays false (chart default) so a redeploy
+        # can never erase a worked copy or the notes remember wrote.
+        enabled: true
+        images:
+          - reference: ghcr.io/maxisgrom/abox/xray-memory-maps-fwdays:2026-09-25c
+            pullPolicy: IfNotPresent
+            path: /maps
       # Chart default is already false; spelled out because upstream's own
-      # xray-memory.yaml turns this on and it would be easy to copy that
-      # without noticing our corpus has nothing in it worth encrypting -- a
-      # topology of publicly-known lab infrastructure, not secrets or names.
+      # xray-memory.yaml turns this on (with an age recipient) and it would
+      # be easy to copy that without noticing our maps and notes have
+      # nothing in them worth encrypting.
       encryption:
         enabled: false
 
@@ -90,5 +120,7 @@ spec:
 
     #   in-cluster MCP: http://xray-memory-fwdays.xray-memory:8085/mcp
     #
-    # Every endpoint (/mcp, /ui, /search, /graph, /node, /status, /metrics) is
-    # unauthenticated -- stays cluster-internal, no HTTPRoute.
+    # Every endpoint but /healthz -- /mcp, /ui, /search, /graph, /node,
+    # /status, /metrics -- needs the bearer token (server.auth above). It
+    # still stays cluster-internal: no HTTPRoute onto agentgateway-external,
+    # unlike the embeddings backends.
