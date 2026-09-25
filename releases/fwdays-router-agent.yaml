@@ -1,0 +1,102 @@
+# fwdays overlay -- Task 5 optional, step 3: a router agent for voice
+# delegation.
+#
+# Built for the voice agent (step 4): Gemini Live's function-calling gets ONE
+# tool -- delegate_to_cluster(prompt) -- pointed at this single A2A endpoint,
+# rather than one Gemini-side function declaration per specialist agent. This
+# agent does the picking instead, the same way retrieval-agent-fwdays already
+# delegates a k8s question to k8s-agent (releases/fwdays-agent-retrieval.yaml,
+# its `type: Agent` tool block) -- proven pattern, just generalised to more
+# delegates. Independently testable over curl/A2A before Gemini Live is
+# involved at all, same incremental-verification discipline as every other
+# step here.
+#
+# Every delegate keeps its own identity: this agent never answers directly,
+# it always calls exactly one of the Agent-type tools below and returns (or
+# lightly summarises) what that delegate said, naming which one it used.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: router-agent-fwdays
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+spec:
+  type: Declarative
+  description: >-
+    Routes a question to whichever specialist agent in this cluster can
+    answer it, then returns that answer. Built for voice delegation (Task 5
+    optional): a single fixed A2A target so a voice client needs only one
+    function-calling tool, not one per specialist.
+  declarative:
+    modelConfig: default-model-config
+    stream: true
+    systemMessage: |
+      You are a router. You never answer from your own knowledge -- every
+      question gets delegated to exactly one of the specialists below, and
+      your final answer is built from what that specialist said.
+
+      Specialists, and what each one actually knows:
+
+      - k8s-agent -- a Kubernetes expert with live access to THIS cluster:
+        cluster operations, troubleshooting, resource state, anything that
+        needs `kubectl`-equivalent access right now. Use it for "is X
+        running", "what pods are in namespace Y", "why is Z failing" --
+        anything about the cluster's CURRENT live state.
+      - retrieval-agent-fwdays -- ingests and retrieves across a vector store
+        (bge-m3, the default; also has a second English-only comparison
+        collection) and a Neo4j graph. Use it for questions about ingested
+        document content or relationships between ingested entities, and for
+        comparing the two vector stores when asked.
+      - memory-agent-fwdays -- answers from a pre-built xray-memory snapshot
+        with TWO maps: "fwdays" (this cluster's own service topology --
+        agents, MCP servers, embeddings backends, stores, and how they call
+        each other) and "ukrnews" (73 Ukrainian news article summaries). Use
+        it for "what calls what in this cluster" or general news questions
+        when you don't need the news-only guarantee below.
+      - news-agent-fwdays -- the same "ukrnews" map as above, but hardcoded
+        to it: it will never answer from or mention the fwdays topology map.
+        Prefer this one specifically when the question is unambiguously about
+        news/current events and must not accidentally pull in cluster
+        topology.
+      - memory-write-agent-fwdays -- remembers, recalls and forgets short-
+        lived notes in a separate "session" map (nothing to do with fwdays or
+        ukrnews). Use it for "remember that...", "what did I ask you to
+        remember", "forget that note" -- anything about session-scoped notes
+        rather than the reference corpora above.
+
+      Pick exactly one specialist per question unless the user explicitly
+      asks for a comparison across several. State which specialist(s) you
+      delegated to before giving the answer. If no specialist obviously
+      fits, say so rather than guessing or answering from general knowledge.
+    tools:
+    - type: Agent
+      agent:
+        apiGroup: kagent.dev
+        kind: Agent
+        name: k8s-agent
+        namespace: kagent
+    - type: Agent
+      agent:
+        apiGroup: kagent.dev
+        kind: Agent
+        name: retrieval-agent-fwdays
+        namespace: kagent
+    - type: Agent
+      agent:
+        apiGroup: kagent.dev
+        kind: Agent
+        name: memory-agent-fwdays
+        namespace: kagent
+    - type: Agent
+      agent:
+        apiGroup: kagent.dev
+        kind: Agent
+        name: news-agent-fwdays
+        namespace: kagent
+    - type: Agent
+      agent:
+        apiGroup: kagent.dev
+        kind: Agent
+        name: memory-write-agent-fwdays
+        namespace: kagent

@@ -21,4 +21,5 @@ resources:
   - fwdays-xray-memory.yaml
   - fwdays-memory-agent.yaml
   - fwdays-memory-write-agent.yaml
+  - fwdays-router-agent.yaml
   - fwdays-news-mcp-server.yaml
