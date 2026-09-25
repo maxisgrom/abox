@@ -56,7 +56,11 @@ spec:
       source: image
       image:
         repository: ghcr.io/maxisgrom/abox/xray-memory-maps-fwdays
-        tag: "2026-09-25"
+        # 2026-09-25b adds a second map, ukrnews (73 Ukrainian news articles
+        # from nv.ua RSS feeds) alongside fwdays (this cluster's own service
+        # graph) -- a Task 5 follow-up comparing xray-memory's own engine
+        # against qdrant+bge-m3 (qdrant-mcp-news) on the SAME corpus.
+        tag: "2026-09-25b"
       # Chart default is already false; spelled out because upstream's own
       # xray-memory.yaml turns this on and it would be easy to copy that
       # without noticing our corpus has nothing in it worth encrypting -- a

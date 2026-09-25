@@ -52,3 +52,41 @@ equivalent scored its best (and not fully correct) hit at 0.43. This mirrors
 Task 3/4's finding exactly, just for a different corpus -- xray-memory's own
 embedding model choice is a separate axis from the one ADR 0001 already
 decided for qdrant-mcp, and inherits the same weakness.
+
+## The second map: ukrnews (Task 5 follow-up)
+
+`fwdays-news-corpus.json` is the same `servicemap` input shape (`{name,
+summary, calls, called_by}`, edges left empty -- these are standalone
+articles, not a call graph), built from real Ukrainian news prose rather than
+a hand-authored description. The source data and the fetch script live in the
+fwdays-harness-engineering repo, not here: `scripts/news-corpus/fetch_rss.py`
+pulls RSS description text from a curated set of nv.ua feeds across many
+topics, dedupes by guid, and writes `corpus.json`; this file is that same data
+reshaped for `servicemap`, copied in so the map can be rebuilt from this repo
+alone.
+
+Rebuild the same way as `fwdays`, just pointed at this file and a different
+label:
+
+```bash
+kubectl create configmap xray-news-servicemap-input \
+  --from-file=servicemap-input.json=corpus/fwdays-news-corpus.json
+# ...same servicemap invocation as fwdays, with -label ukrnews -in that file...
+kubectl cp xray-servicemap-build:/out/ukrnews.graph.gob.gz \
+  images/xray-memory-maps-fwdays/maps/ukrnews.graph.gob.gz
+```
+
+Both `fwdays.graph.gob.gz` and `ukrnews.graph.gob.gz` ship in the same maps
+image and are served by the same `xray-memory-fwdays` pod as two separate
+projects -- that's what xray-memory's multi-map design is for, so this needed
+no second Deployment, just a bigger image and `memory-agent-fwdays`'s prompt
+updated to say which map answers which kind of question.
+
+## Why also index into qdrant (qdrant-mcp-news)
+
+The same 73 articles are also indexed into qdrant under `abox-news-bge-m3`
+(`releases/fwdays-news-mcp-server.yaml`, `bge-m3` via the existing
+`bge-m3-embeddings` backend) so xray-memory's own engine and qdrant+bge-m3 can
+be Recall@k-compared on the identical corpus -- a different axis from Task
+3/4's "which embedding model" comparison: this one holds the corpus and the
+embedding model choice, and varies the retrieval engine itself.
