@@ -1,0 +1,103 @@
+# fwdays overlay -- Task 5 step 4: wire xray-memory into kagent.
+#
+# xray-memory-fwdays (releases/fwdays-xray-memory.yaml) only exposes an HTTP
+# MCP endpoint of its own; nothing in kagent could call it until this file.
+# RemoteMCPServer, not MCPServer -- xray-memory is already a long-lived
+# Deployment serving /mcp itself, unlike the stdio qdrant-mcp servers kagent's
+# kmcp gateway spawns a process for.
+#
+# A dedicated agent, not a third toolset bolted onto retrieval-agent-fwdays:
+# that agent's prompt is built around exactly two stores (a vector collection,
+# a Cypher graph) being compared side by side. xray-memory is a structurally
+# different thing -- one server holding both a graph AND its own vector index
+# together, addressed through its own tool names -- and mixing it into that
+# prompt would blur what retrieval-agent-fwdays demonstrates rather than add
+# to it.
+#
+# Tool names come from `strings` on the public binary (ghcr.io/den-vasyliev/
+# abox/xray-memory), not documentation -- the chart/README don't enumerate
+# them. Full set found: search_graph, search_graph_docs, get_graph_node,
+# get_graph_impact, get_graph_risk, get_graph_stats, update_code_graph,
+# list_skills, get_skill, recall, remember, forget. Only three are meaningful
+# against THIS corpus and bound below:
+#   - search_graph, get_graph_node: what the eval in Task 5 step 5 exercises.
+#   - get_graph_stats: cheap sanity check ("how big is this map").
+# Left out: get_graph_impact/get_graph_risk (blast-radius/risk scoring assumes
+# a parsed CODE graph with call sites; our servicemap catalog has none of
+# that structure, so these would run but answer nothing meaningful).
+# list_skills/get_skill (no skills map shipped in this corpus).
+# recall/remember/forget (server.writable: false -- remember can't write, so
+# recall would only ever report empty; update_code_graph needs the CGO build
+# this fork does not have, on top of also needing writable).
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: xray-memory-fwdays
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+spec:
+  description: xray-memory serving the fwdays service-graph corpus (Task 5)
+  protocol: STREAMABLE_HTTP
+  url: http://xray-memory-fwdays.xray-memory:8085/mcp
+  timeout: 30s
+  sseReadTimeout: 5m0s
+  terminateOnClose: true
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: memory-agent-fwdays
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+spec:
+  type: Declarative
+  description: >-
+    Answers questions about this cluster's own agents/MCP servers/backends
+    from a pre-built xray-memory snapshot (Task 5's agentic-memory corpus).
+  declarative:
+    modelConfig: default-model-config
+    stream: true
+    systemMessage: |
+      You answer questions about THIS abox+fwdays cluster's own architecture:
+      which agents exist, which MCP servers back them, which embeddings
+      backend and vector/graph store each one calls. Your only source of
+      truth is the xray-memory tools below, which serve a single pre-built
+      map ("fwdays") describing this cluster's own service topology -- not
+      live cluster state, and not any other codebase.
+
+      Tools:
+      - search_graph -- semantic search over the map. Give it a natural-
+        language description of what you're looking for; it returns ranked
+        nodes with a qn (qualified name) and a short preview.
+      - get_graph_node -- given a qn from a search_graph hit, returns that
+        node's full record: its summary and its calls/called_by edges.
+      - get_graph_stats -- catalog size (node/edge counts). Use it only if
+        asked how big the map is, not as a substitute for search_graph.
+
+      Always search_graph first, then get_graph_node on the qn(s) worth
+      expanding before answering -- a search preview is a snippet, not the
+      full record. State which tool(s) you used.
+
+      This map was built from a hand-authored service graph, not from
+      parsing source code, and its query embedder is nomic-embed-text -- the
+      same model ADR 0001/0003 found tokenises Ukrainian near
+      character-level. English questions will retrieve well; Ukrainian ones
+      may not, and a bad hit at low score is a property of the corpus's
+      embedding choice, not evidence the fact is missing. Prefer English
+      queries to search_graph regardless of the language you were asked in.
+
+      If search_graph returns nothing relevant, say so plainly -- do not
+      guess from general knowledge about Kubernetes or kagent. This agent
+      only knows what the map says.
+    tools:
+    - type: McpServer
+      mcpServer:
+        apiGroup: kagent.dev
+        kind: RemoteMCPServer
+        name: xray-memory-fwdays
+        toolNames:
+        - search_graph
+        - get_graph_node
+        - get_graph_stats
