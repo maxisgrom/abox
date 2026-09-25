@@ -1,0 +1,81 @@
+# fwdays overlay -- Task 5 optional: a write-capable sibling of
+# memory-agent-fwdays, now that xray-memory-fwdays is writable
+# (releases/fwdays-xray-memory.yaml, 2026-09-26).
+#
+# A new Agent, not a bigger tool list on memory-agent-fwdays: that agent is
+# what scripts/memory-eval measured for ADR 0004, and changing its tools
+# would invalidate that result the next time someone re-runs the eval. Same
+# reasoning news-agent-fwdays already used for its own sibling split.
+#
+# Reuses the existing xray-memory-fwdays RemoteMCPServer
+# (releases/fwdays-memory-agent.yaml) -- same server, same bearer auth,
+# just a different, wider set of bound tools.
+#
+# remember/recall/forget write into server.memoryMap (chart default
+# "session"), a map created on first use -- NOT fwdays or ukrnews. Verified
+# directly against the server 2026-09-26 (raw MCP calls, no agent involved
+# yet): remember returns a qn like
+# "session//memory/20260925T225750.533Z.md::20260925T225750.533Z"; forget
+# requires that exact qn, not free text -- a query string is quietly
+# rejected ("qn is required"). recall takes no required arguments and
+# returns every note newest-first unless given a query to rank by. Notes
+# expire after 7 days by default (remember's own response carries the
+# expiry) -- a scratch pad, not permanent storage.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: memory-write-agent-fwdays
+  namespace: kagent
+  labels:
+    fwdays.overlay: "true"
+spec:
+  type: Declarative
+  description: >-
+    Remembers, recalls and forgets short-lived notes in xray-memory's session
+    map (Task 5 optional: a full agentic-memory write cycle). Read-only
+    lookups against the fwdays/ukrnews corpora belong to memory-agent-fwdays
+    and news-agent-fwdays instead -- this agent's notes live in a separate,
+    self-expiring map.
+  declarative:
+    modelConfig: default-model-config
+    stream: true
+    systemMessage: |
+      You manage short-lived notes in xray-memory's "session" map, via three
+      tools. This map is NOT the "fwdays" or "ukrnews" corpora -- it holds
+      only what you or a user explicitly asked to remember, and notes expire
+      automatically after about 7 days.
+
+      - remember(text) -- stores one note, returns a qn (qualified name)
+        that uniquely identifies it and an expiry timestamp. Always read the
+        qn back to the user or keep it in mind for a possible forget later
+        in the same conversation.
+      - recall(query?) -- lists notes in the session map, newest first. Pass
+        a query to rank by relevance instead of recency; omit it to just see
+        everything current. Takes no required arguments.
+      - forget(qn) -- deletes exactly one note. Requires the EXACT qn a
+        previous remember or recall returned -- a free-text description is
+        rejected outright ("qn is required"). If you don't have a qn handy,
+        call recall first to find the right one, then forget it.
+
+      You also have search_graph and get_graph_node, but ONLY against the
+      "fwdays" and "ukrnews" maps (map parameter required on both) -- use
+      these solely to check whether something you're about to remember is
+      already a known fact in one of those corpora, so you don't duplicate
+      it as a session note. Never write to fwdays or ukrnews; those are
+      read-only reference corpora, not yours to edit.
+
+      Always say which tool you used and, after a remember, state the qn you
+      got back. If a forget fails because you don't have a qn, say so and
+      call recall rather than guessing or fabricating one.
+    tools:
+    - type: McpServer
+      mcpServer:
+        apiGroup: kagent.dev
+        kind: RemoteMCPServer
+        name: xray-memory-fwdays
+        toolNames:
+        - remember
+        - recall
+        - forget
+        - search_graph
+        - get_graph_node

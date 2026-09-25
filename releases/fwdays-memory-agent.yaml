@@ -26,9 +26,21 @@
 # a parsed CODE graph with call sites; our servicemap catalog has none of
 # that structure, so these would run but answer nothing meaningful).
 # list_skills/get_skill (no skills map shipped in this corpus).
-# recall/remember/forget (server.writable: false -- remember can't write, so
-# recall would only ever report empty; update_code_graph needs the CGO build
-# this fork does not have, on top of also needing writable).
+# recall/remember/forget were left out here originally because
+# server.writable was false; that changed 2026-09-26 (writable, PVC, seeded --
+# see releases/fwdays-xray-memory.yaml). Left out of THIS agent regardless:
+# memory-agent-fwdays is what scripts/memory-eval measured for ADR 0004, and
+# changing its tool list would invalidate that result. The write-capable
+# sibling, memory-write-agent-fwdays, lives in
+# releases/fwdays-memory-write-agent.yaml and binds those three tools instead.
+#
+# 2026-09-26: xray-memory-fwdays now requires bearer auth (chart 0.7.0's
+# server.auth, turned on the same day writable did -- see
+# fwdays-xray-memory.yaml for why). headersFrom below carries it; the Secret
+# holds it pre-formatted as "Bearer <token>" under the `bearer` key, because
+# RemoteMCPServer's headersFrom takes a Secret value verbatim -- there is no
+# way to template a prefix onto it. `token` (no prefix) is a separate key in
+# the same Secret, used by the server itself (server.auth.secretKey).
 apiVersion: kagent.dev/v1alpha2
 kind: RemoteMCPServer
 metadata:
@@ -43,6 +55,12 @@ spec:
   timeout: 30s
   sseReadTimeout: 5m0s
   terminateOnClose: true
+  headersFrom:
+    - name: Authorization
+      valueFrom:
+        type: Secret
+        name: xray-memory-auth
+        key: bearer
 ---
 apiVersion: kagent.dev/v1alpha2
 kind: Agent
