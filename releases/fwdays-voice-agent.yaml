@@ -1,0 +1,83 @@
+# fwdays overlay -- Task 5 optional, step 4: voice agent.
+#
+# App source lives in the fwdays-harness-engineering repo
+# (apps/voice-agent-fwdays/), not here -- unlike xray-memory-maps-fwdays,
+# this is fully our own application code, not a corpus artifact tied to abox
+# internals, so it belongs with the rest of that project's own work
+# (docs, ADRs, scripts) rather than split across two repos. This file is
+# only the deployment: a plain Kubernetes Deployment/Service, not a kagent
+# CRD -- kagent's MCPServer has no secretKeyRef support (flat
+# map[string]string env, confirmed against the CRD schema in Task 4), and a
+# plain Deployment does.
+#
+# In-cluster, not a dev-machine script: the backend calls
+# router-agent-fwdays over A2A via in-cluster DNS
+# (kagent-controller.kagent:8083) directly -- no SSH tunnel, no
+# port-forward for that hop. Only the browser-facing side needs a
+# port-forward, reached the same way every other lab UI already is
+# (scripts/lab-ui.sh). Browser getUserMedia treats http://localhost:<port>
+# as a secure context without TLS, so plain kubectl port-forward is enough.
+#
+# GEMINI_API_KEY comes from a Secret created directly with kubectl (never
+# through a manifest, never through a tool call) -- see
+# scripts/lab-bootstrap.sh in fwdays-harness-engineering.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: voice-agent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voice-agent-fwdays
+  namespace: voice-agent
+  labels:
+    fwdays.overlay: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: voice-agent-fwdays
+  template:
+    metadata:
+      labels:
+        app: voice-agent-fwdays
+    spec:
+      containers:
+        - name: voice-agent-fwdays
+          image: ghcr.io/maxisgrom/fwdays-harness-engineering/voice-agent-fwdays:2026-09-26
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: voice-agent-fwdays-gemini
+                  key: GEMINI_API_KEY
+            # Model and router URL are left at the app's own defaults
+            # (gemini-3.8-live; kagent-controller.kagent:8083's A2A endpoint
+            # for router-agent-fwdays) -- override here only if either needs
+            # to change without a new image.
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: voice-agent-fwdays
+  namespace: voice-agent
+spec:
+  selector:
+    app: voice-agent-fwdays
+  ports:
+    - port: 8080
+      targetPort: 8080
