@@ -18,3 +18,4 @@ resources:
   - fwdays-bge-m3-embeddings.yaml
   - fwdays-mcp-servers.yaml
   - fwdays-agent-retrieval.yaml
+  - fwdays-xray-memory.yaml

@@ -1,0 +1,68 @@
+# Builds the fwdays xray-memory maps image and pushes it to GHCR.
+#
+# The image is data only (images/xray-memory-maps-fwdays/maps/*.graph.gob.gz),
+# not a binary, so a single linux/amd64 manifest is enough -- the kubelet mounts
+# it as a filesystem via ImageVolume regardless of platform, and every node in
+# this cluster is amd64. Rebuild by re-running `xray-memory servicemap` (see
+# corpus/README.md), committing the new .graph.gob.gz, and re-running this
+# workflow -- it does not run on every push, since the corpus changes far less
+# often than releases/ does.
+name: Build fwdays xray-memory maps image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'images/xray-memory-maps-fwdays/**'
+      - '.github/workflows/xray-memory-maps-fwdays-image.yaml'
+  # So the image can be published from a feature branch before it is merged.
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/xray-memory-maps-fwdays
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: images/xray-memory-maps-fwdays
+          platforms: linux/amd64
+          push: true
+          # Tag encodes the build date, matching upstream's own maps image
+          # convention (xray-memory-maps:2026-09-16). Bump it whenever the
+          # corpus is rebuilt -- do not mutate a published tag, since the
+          # HelmRelease pins this by tag.
+          tags: |
+            ${{ env.IMAGE }}:2026-09-25
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "### fwdays xray-memory maps image pushed" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.IMAGE }}:2026-09-25" >> $GITHUB_STEP_SUMMARY
+          echo "digest: ${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

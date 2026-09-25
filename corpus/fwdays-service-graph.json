@@ -1,0 +1,98 @@
+[
+  {
+    "name": "retrieval-agent-fwdays",
+    "summary": "kagent Declarative Agent in the kagent namespace. Ingests Kubernetes manifests into a graph and prose into a vector store, then answers questions from whichever store fits. Carries BOTH qdrant toolsets (vector_store/vector_find on the bge-m3 collection, qdrant-store/qdrant-find on the all-MiniLM collection) so the two embedding models can be A/B compared live, unlike upstream's retrieval-agent which only has one.",
+    "calls": ["qdrant-mcp-bge", "qdrant-mcp-official", "neo4j-mcp", "k8s-agent"],
+    "called_by": []
+  },
+  {
+    "name": "retrieval-agent",
+    "summary": "Upstream kagent Declarative Agent, shipped unmodified in releases/agent-retrieval.yaml. Same ingest/retrieve contract as retrieval-agent-fwdays but with a single vector toolset, bound to qdrant-mcp (nomic-embed-text-v1.5).",
+    "calls": ["qdrant-mcp", "neo4j-mcp", "k8s-agent"],
+    "called_by": []
+  },
+  {
+    "name": "k8s-agent",
+    "summary": "kagent delegate agent. The only tool in this system allowed to read live cluster manifests; retrieval-agent and retrieval-agent-fwdays call it during ingest and are forbidden from calling it during retrieval.",
+    "calls": [],
+    "called_by": ["retrieval-agent", "retrieval-agent-fwdays"]
+  },
+  {
+    "name": "qdrant-mcp",
+    "summary": "abox's own Go MCP server (mcp/qdrant-mcp), tools vector_store/vector_find. Embeds through an OpenAI-compatible /v1/embeddings endpoint rather than in-process, replacing mcp-server-qdrant which OOMKilled trying to load a large model with fastembed. Backs collection abox-nomic.",
+    "calls": ["llama-cpp-embeddings", "qdrant"],
+    "called_by": ["retrieval-agent"]
+  },
+  {
+    "name": "qdrant-mcp-bge",
+    "summary": "fwdays overlay MCP server, same Go binary as qdrant-mcp, pointed at a different embeddings backend and collection: bge-m3, dims 1024, no query/document prefix (bge-m3 needs none, unlike nomic). This is comparison arm C from Task 3/4's Ukrainian retrieval evaluation, and the ADR 0001 choice for production Ukrainian retrieval quality. Backs collection abox-bge-m3.",
+    "calls": ["bge-m3-embeddings", "qdrant"],
+    "called_by": ["retrieval-agent-fwdays"]
+  },
+  {
+    "name": "qdrant-mcp-bge-hosted",
+    "summary": "fwdays overlay MCP server, same model as qdrant-mcp-bge (bge-m3) but served hosted via OpenRouter instead of self-hosted llama.cpp. Applied directly to the cluster, outside Flux's tracked inventory. Existed only to isolate serving-stack/quantization from model quality (Task 4, ADR 0003 Step 1a); not wired into any agent's tool list. Backs collection abox-bge-m3-hosted.",
+    "calls": ["openrouter", "qdrant"],
+    "called_by": []
+  },
+  {
+    "name": "qdrant-mcp-official",
+    "summary": "Upstream mcp-server-qdrant (celeronsx fork), tools qdrant-store/qdrant-find. Embeds all-MiniLM-L6-v2 in-process via fastembed. English-vocabulary model: tokenises Cyrillic near character-level, so it retrieves Ukrainian badly on purpose -- kept as the comparison baseline (arm A). Backs collection abox-minilm.",
+    "calls": ["qdrant"],
+    "called_by": ["retrieval-agent-fwdays"]
+  },
+  {
+    "name": "qdrant-mcp-e5",
+    "summary": "fwdays overlay MCP server (mcp-server-qdrant, upstream image) attempting multilingual-e5-large in-process via fastembed. Comparison arm B: a documented negative result -- in-process embedding cannot load a model this large, so this MCPServer exists to prove that architecture point, not to serve traffic. Backs collection abox-e5.",
+    "calls": ["qdrant"],
+    "called_by": []
+  },
+  {
+    "name": "neo4j-mcp",
+    "summary": "MCP server exposing get-schema/read-cypher/write-cypher over the neo4j graph. Used by both retrieval agents for the relationship half of their ingest/retrieve contract.",
+    "calls": ["neo4j"],
+    "called_by": ["retrieval-agent", "retrieval-agent-fwdays"]
+  },
+  {
+    "name": "llama-cpp-embeddings",
+    "summary": "Standalone llama.cpp server (llama-cpp namespace), nomic-embed-text-v1.5 baked in at f16, 8 slots x 2048 ctx, exposed as /v1/embeddings. One of two backends serving the same model -- the other is llm-d -- kept side by side so llm-d's InferencePool/EPP machinery can be evaluated against a plain Deployment serving identical weights.",
+    "calls": [],
+    "called_by": ["qdrant-mcp"]
+  },
+  {
+    "name": "bge-m3-embeddings",
+    "summary": "Standalone llama.cpp server (llama-cpp namespace), bge-m3 GGUF at Q8_0, exposed as /v1/embeddings. The self-hosted half of the arm-C/arm-E comparison in ADR 0003 (Task 4): arm E used the identical model hosted via OpenRouter instead, to check whether this quantization was costing retrieval quality. It measured statistically equal to hosted, so this stayed the shipped choice on cost grounds.",
+    "calls": [],
+    "called_by": ["qdrant-mcp-bge"]
+  },
+  {
+    "name": "llm-d-embedding",
+    "summary": "llm-d ModelService (llm-d namespace): llama.cpp behind an InferencePool + endpoint picker (EPP), serving the same nomic-embed-text-v1.5 weights as llama-cpp-embeddings. Not wired into any MCP server in this cluster; it exists to be curled directly and compared against the plain Deployment.",
+    "calls": [],
+    "called_by": []
+  },
+  {
+    "name": "qdrant",
+    "summary": "Qdrant 1.19.1 vector database (qdrant namespace). Holds every comparison-arm collection: abox-nomic, abox-bge-m3, abox-bge-m3-hosted, abox-minilm, abox-e5, plus whatever retrieval-agent/retrieval-agent-fwdays ingest prose into during a k8s-manifest ingest run.",
+    "calls": [],
+    "called_by": ["qdrant-mcp", "qdrant-mcp-bge", "qdrant-mcp-bge-hosted", "qdrant-mcp-official", "qdrant-mcp-e5"]
+  },
+  {
+    "name": "neo4j",
+    "summary": "Neo4j 2026.7.1 community edition (neo4j namespace), APOC loaded and allowlisted for get-schema's apoc.meta.schema call. Holds the Kubernetes-object graph retrieval-agent/retrieval-agent-fwdays write during ingest: one node per declared CRD (Agent, ModelConfig, MCPServer, HelmRelease, Gateway, HTTPRoute...), keyed on namespace/name, edges named after the referencing field (USES_MODEL, USES_TOOL, BACKED_BY...).",
+    "calls": [],
+    "called_by": ["neo4j-mcp"]
+  },
+  {
+    "name": "openrouter",
+    "summary": "Hosted API, external to the cluster. Used two ways: as an LLM provider for kagent's default-model-config (google/gemini-2.5-flash), and as an embeddings provider for qdrant-mcp-bge-hosted (baai/bge-m3) during Task 4's serving-stack isolation experiment.",
+    "calls": [],
+    "called_by": ["qdrant-mcp-bge-hosted"]
+  },
+  {
+    "name": "xray-memory",
+    "summary": "This service. A code-graph and semantic-memory MCP server (xray-memory namespace), served from pre-built snapshots (serve-snapshots mode -- the public image has no Tree-sitter parser, so live parsing/snapshot-building from source needs a CGO build this fork does not have access to). This map (fwdays.graph.gob.gz) was built instead with the servicemap subcommand from corpus/fwdays-service-graph.json: a hand-authored description of this exact cluster's own topology, embedded through llama-cpp-embeddings. Built for Task 5 (agentic memory corpus + evaluation, ADR 0004).",
+    "calls": ["llama-cpp-embeddings"],
+    "called_by": []
+  }
+]

@@ -1,0 +1,82 @@
+# fwdays overlay -- Task 5: agentic memory corpus.
+#
+# ADDITIVE, mirrors the other fwdays-*.yaml files: a sibling HelmRelease, not a
+# patch of anything upstream ships (upstream's own releases/xray-memory.yaml,
+# on the feat/xray-memory branch, is not merged here).
+#
+# source=image, not pvc: this cluster has no CGO build of xray-memory (the
+# public images ship without Tree-sitter -- `recall snapshot: this build has
+# no Tree-sitter parser`) and no access to the private source repo, so there is
+# nothing to parse live and nothing that needs `remember`/update_code_graph
+# writes yet. The chart REQUIRES writable=false with source=image, which is
+# fine for a read-only corpus: no PVC, no seed initContainer, no age key.
+#
+# The map itself (fwdays.graph.gob.gz) is NOT parsed from source. It's built
+# with `xray-memory servicemap` from corpus/fwdays-service-graph.json -- a
+# hand-authored description of THIS cluster's own agents, MCP servers,
+# embeddings backends and stores, embedded through llama-cpp-embeddings and
+# packaged as images/xray-memory-maps-fwdays. See corpus/README.md to rebuild.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xray-memory
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: xray-memory
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/den-vasyliev/abox/charts/xray-memory
+  ref:
+    tag: "0.6.0"
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: xray-memory-fwdays
+  namespace: xray-memory
+  labels:
+    fwdays.overlay: "true"
+spec:
+  interval: 1h
+  releaseName: xray-memory-fwdays
+  chartRef:
+    kind: OCIRepository
+    name: xray-memory
+    namespace: flux-system
+  install:
+    createNamespace: true
+  values:
+    server:
+      writable: false
+
+    snapshots:
+      source: image
+      image:
+        repository: ghcr.io/maxisgrom/abox/xray-memory-maps-fwdays
+        tag: "2026-09-25"
+      # Chart default is already false; spelled out because upstream's own
+      # xray-memory.yaml turns this on and it would be easy to copy that
+      # without noticing our corpus has nothing in it worth encrypting -- a
+      # topology of publicly-known lab infrastructure, not secrets or names.
+      encryption:
+        enabled: false
+
+    # Query embedding via an in-pod llama.cpp sidecar -- same self-contained
+    # pattern upstream's xray-memory.yaml uses, so this has no cross-release
+    # dependency on llama-cpp-embeddings staying up. Chart defaults for
+    # embeddings.model (nomic-embed-text) and embeddings.dims (256) are left
+    # untouched deliberately: they MUST match what corpus/README.md's
+    # servicemap invocation used to build the snapshot -- dims is a hard
+    # fingerprint check at load, and both are already that exact default.
+    embeddings:
+      sidecar:
+        enabled: true
+        image: ghcr.io/den-vasyliev/abox/nomic-embed:v1.18.1-4ccc0ff
+
+    #   in-cluster MCP: http://xray-memory-fwdays.xray-memory:8085/mcp
+    #
+    # Every endpoint (/mcp, /ui, /search, /graph, /node, /status, /metrics) is
+    # unauthenticated -- stays cluster-internal, no HTTPRoute.
