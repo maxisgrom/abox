@@ -45,7 +45,7 @@ spec:
     spec:
       containers:
         - name: voice-agent-fwdays
-          image: ghcr.io/maxisgrom/fwdays-harness-engineering/voice-agent-fwdays:2026-09-26b
+          image: ghcr.io/maxisgrom/fwdays-harness-engineering/voice-agent-fwdays:2026-09-26c
           ports:
             - containerPort: 8080
           env:
