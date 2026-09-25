@@ -56,11 +56,19 @@ spec:
       source: image
       image:
         repository: ghcr.io/maxisgrom/abox/xray-memory-maps-fwdays
-        # 2026-09-25b adds a second map, ukrnews (73 Ukrainian news articles
+        # 2026-09-25b added a second map, ukrnews (73 Ukrainian news articles
         # from nv.ua RSS feeds) alongside fwdays (this cluster's own service
         # graph) -- a Task 5 follow-up comparing xray-memory's own engine
         # against qdrant+bge-m3 (qdrant-mcp-news) on the SAME corpus.
-        tag: "2026-09-25b"
+        #
+        # 2026-09-25c rebuilds both: the corpus JSON used "summary" as the
+        # per-node key, but servicemap's actual schema is {name, calls,
+        # called_by, description} -- Go's json.Unmarshal silently drops
+        # unknown fields, so every node's real text was never embedded NOR
+        # stored, only an auto-synthesized "Service X. Calls: ... Called by:
+        # ..." sentence. get_graph_node returning no real content on a live
+        # query is what surfaced this. See corpus/README.md.
+        tag: "2026-09-25c"
       # Chart default is already false; spelled out because upstream's own
       # xray-memory.yaml turns this on and it would be easy to copy that
       # without noticing our corpus has nothing in it worth encrypting -- a

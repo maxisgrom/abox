@@ -1,6 +1,6 @@
 # fwdays corpus: this cluster's own service graph
 
-`fwdays-service-graph.json` is a hand-authored array of `{name, summary, calls,
+`fwdays-service-graph.json` is a hand-authored array of `{name, description, calls,
 called_by}` describing this exact cluster's own topology: every agent, MCP
 server, embeddings backend, and vector/graph store from Tasks 1-4, and how
 they call each other. It exists because the public `xray-memory` images ship
@@ -9,6 +9,20 @@ parser`), and the source repo is private, so building a corpus by parsing real
 source code is not available to this fork. `servicemap` -- which builds a
 graph+vector snapshot from a hand-supplied call graph instead of parsing
 anything -- is.
+
+**The per-node field is `description`, not `summary`.** An earlier version of
+this corpus (and of `fwdays-news-corpus.json`) used `summary`; Go's
+`json.Unmarshal` silently drops unknown object keys, so that text was never
+embedded and never stored -- every node fell back to an auto-synthesized
+`"Service X. Calls: ... Called by: ..."` sentence, which is all
+`get_graph_node` and `search_graph` had to work with. It looked like working
+retrieval (ranking by name/calls text still returns plausible-looking hits)
+right up until a query needed the actual descriptive text, at which point
+`get_graph_node` came back essentially empty. Confirm the field name against
+the tool itself before trusting a corpus built this way -- the CLI's own
+`-h` output doesn't mention per-node fields beyond `{name, calls, called_by}`
+at all; `description` only turned up by grepping the binary's JSON struct
+tags (`strings <the xray-memory binary> | grep 'json:"description"'`).
 
 ## Rebuilding the snapshot
 
@@ -56,7 +70,7 @@ decided for qdrant-mcp, and inherits the same weakness.
 ## The second map: ukrnews (Task 5 follow-up)
 
 `fwdays-news-corpus.json` is the same `servicemap` input shape (`{name,
-summary, calls, called_by}`, edges left empty -- these are standalone
+description, calls, called_by}`, edges left empty -- these are standalone
 articles, not a call graph), built from real Ukrainian news prose rather than
 a hand-authored description. The source data and the fetch script live in the
 fwdays-harness-engineering repo, not here: `scripts/news-corpus/fetch_rss.py`
@@ -75,6 +89,22 @@ kubectl create configmap xray-news-servicemap-input \
 kubectl cp xray-servicemap-build:/out/ukrnews.graph.gob.gz \
   images/xray-memory-maps-fwdays/maps/ukrnews.graph.gob.gz
 ```
+
+**73 real-text nodes in one `servicemap` call can exceed the tool's embedding
+request timeout** (a hardcoded client-side deadline, not a flag -- `context
+deadline exceeded (Client.Timeout exceeded while awaiting headers)`), because
+this corpus's nodes carry actual article text rather than the couple of words
+`fwdays`'s auto-synthesized `"Service X. Calls: ..."` sentences would have
+needed. Splitting the input into smaller batches does NOT help: each
+`servicemap` run OVERWRITES `<label>.graph.gob.gz` with only that run's nodes,
+it does not merge across separate invocations (`cache_hits` only dedupes
+identical text within a run's own embedder cache, not across runs) -- running
+5 batches of ~15 nodes each left only the last batch's 13 nodes in the file.
+What worked: temporarily raising `llama-cpp-embeddings`' CPU (`kubectl patch
+deployment llama-cpp-embeddings -n llama-cpp ...` to 6 CPU / 4 CPU request),
+which brought all 73 nodes in as one call under 15 seconds, then reverting it
+back to the shipped 500m/2 afterward -- this is a one-off build-time need, not
+a standing resource change.
 
 Both `fwdays.graph.gob.gz` and `ukrnews.graph.gob.gz` ship in the same maps
 image and are served by the same `xray-memory-fwdays` pod as two separate
