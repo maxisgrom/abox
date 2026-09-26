@@ -45,7 +45,7 @@ spec:
     spec:
       containers:
         - name: avatar-fwdays
-          image: ghcr.io/maxisgrom/fwdays-harness-engineering/avatar-fwdays:2026-09-26b
+          image: ghcr.io/maxisgrom/fwdays-harness-engineering/avatar-fwdays:2026-09-26c
           ports:
             - containerPort: 3000
           env:
@@ -54,8 +54,12 @@ spec:
                 secretKeyRef:
                   name: avatar-fwdays-runway
                   key: RUNWAYML_API_SECRET
-            - name: NEXT_PUBLIC_AVATAR_ID
-              value: music-superstar
+            # NEXT_PUBLIC_AVATAR_ID is NOT set here: Next.js inlines
+            # NEXT_PUBLIC_ vars into the client bundle at build time, so a
+            # runtime env var here would have zero effect on the browser --
+            # it has to be a Docker build-arg instead (see apps/avatar-fwdays/
+            # Dockerfile in fwdays-harness-engineering). Currently baked in as
+            # the custom avatar 72c6448e-9502-4f55-a0ba-37aef45eaa30.
             # MEMORY_AGENT_A2A_URL left at the app's own in-cluster default.
           readinessProbe:
             httpGet: { path: /api/healthz, port: 3000 }
