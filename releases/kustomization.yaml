@@ -23,4 +23,5 @@ resources:
   - fwdays-memory-write-agent.yaml
   - fwdays-router-agent.yaml
   - fwdays-voice-agent.yaml
+  - fwdays-avatar.yaml
   - fwdays-news-mcp-server.yaml

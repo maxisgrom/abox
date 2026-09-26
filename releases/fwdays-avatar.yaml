@@ -1,0 +1,82 @@
+# fwdays overlay -- Task 5 optional, step 5: avatar with a full memory cycle.
+#
+# App source lives in the fwdays-harness-engineering repo
+# (apps/avatar-fwdays/) -- same reasoning as voice-agent-fwdays: this is our
+# own application code, not an abox-internal artifact. This file is only
+# the deployment.
+#
+# A Next.js app (RunwayML's official avatars-react + avatars-node-rpc
+# pattern, adapted from their own nextjs-rpc-external-api example), not a
+# kagent CRD -- same secretKeyRef reasoning as voice-agent-fwdays.
+#
+# Three backend_rpc tools (remember_note, recall_notes, forget_note) call
+# memory-write-agent-fwdays DIRECTLY over in-cluster A2A
+# (kagent-controller.kagent:8083) -- no router-agent-fwdays hop, since these
+# tools are already explicitly memory-scoped; there's no "which specialist"
+# decision to make. xray-memory-fwdays's own write path (server.writable,
+# PVC, seed -- releases/fwdays-xray-memory.yaml) and memory-write-agent-fwdays
+# (releases/fwdays-memory-write-agent.yaml) are both prerequisites, already
+# live.
+#
+# RUNWAYML_API_SECRET comes from a Secret created directly with kubectl
+# (never through a manifest, never through a tool call) -- see
+# scripts/lab-bootstrap.sh in fwdays-harness-engineering.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: avatar
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: avatar-fwdays
+  namespace: avatar
+  labels:
+    fwdays.overlay: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: avatar-fwdays
+  template:
+    metadata:
+      labels:
+        app: avatar-fwdays
+    spec:
+      containers:
+        - name: avatar-fwdays
+          image: ghcr.io/maxisgrom/fwdays-harness-engineering/avatar-fwdays:2026-09-26
+          ports:
+            - containerPort: 3000
+          env:
+            - name: RUNWAYML_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: avatar-fwdays-runway
+                  key: RUNWAYML_API_SECRET
+            - name: NEXT_PUBLIC_AVATAR_ID
+              value: music-superstar
+            # MEMORY_AGENT_A2A_URL left at the app's own in-cluster default.
+          readinessProbe:
+            httpGet: { path: /api/healthz, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/healthz, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 1, memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: avatar-fwdays
+  namespace: avatar
+spec:
+  selector:
+    app: avatar-fwdays
+  ports:
+    - port: 3000
+      targetPort: 3000
