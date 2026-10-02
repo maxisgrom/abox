@@ -109,6 +109,25 @@ spec:
                 # is an LLM/TOOL/AGENT leaf operation -- CHAIN is
                 # OpenInference's own generic orchestration/wrapper kind.
                 - set(attributes["openinference.span.kind"], "CHAIN") where name == "POST /" or name == "invocation"
+                # Phoenix's LLM provider/system badge reads gen_ai.provider.name
+                # (or the legacy gen_ai.system) -- kagent's generate_content
+                # spans set neither, so the badge was blank. Every ModelConfig
+                # in this cluster is OpenRouter behind an OpenAI-compatible
+                # endpoint (releases/kagent.yaml's providers.openAI), so
+                # "openai" is accurate regardless of which model name is
+                # actually in use.
+                - set(attributes["gen_ai.provider.name"], "openai") where attributes["gen_ai.operation.name"] == "generate_content" and attributes["gen_ai.provider.name"] == nil
+                # search_graph is semantically retrieval over the xray-memory
+                # corpus (ADR 0004), not a generic tool call -- reclassifying
+                # it gets Phoenix's RETRIEVER kind instead of TOOL. Full
+                # per-document rendering (a ranked table with scores) needs
+                # each result renamed qn->id, preview->content -- declarative
+                # OTTL has no map/rename-within-array-element primitive, so
+                # that part is NOT done here (same limitation as the
+                # session-level first_input/last_output gap). Query text
+                # alone is a plain single-value extraction and works fine.
+                - set(attributes["gen_ai.operation.name"], "retrieval") where attributes["gen_ai.tool.name"] == "search_graph"
+                - set(attributes["gen_ai.retrieval.query.text"], ParseJSON(attributes["gcp.vertex.agent.tool_call_args"])["query"]) where attributes["gcp.vertex.agent.tool_call_args"] != nil and attributes["gen_ai.tool.name"] == "search_graph"
       exporters:
         debug: {}
         otlp_grpc/jaeger:
