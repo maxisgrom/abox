@@ -94,7 +94,21 @@ spec:
                 # spans specifically (distinct from gen_ai.input/output.messages,
                 # which are for LLM-generation spans).
                 - set(attributes["gen_ai.tool.call.arguments"], attributes["gcp.vertex.agent.tool_call_args"]) where attributes["gcp.vertex.agent.tool_call_args"] != nil
-                - set(attributes["gen_ai.tool.call.result"], attributes["gcp.vertex.agent.tool_response"]) where attributes["gcp.vertex.agent.tool_response"] != nil
+                # tool_response is double-encoded: a JSON object whose
+                # "output" field is itself a JSON-formatted string (real
+                # newlines inside it, escaped again by the outer encoding).
+                # Copying it raw showed literal "\n" in Phoenix instead of
+                # formatted text. Unwrap one level with ParseJSON so the
+                # inner, already-formatted string becomes the attribute
+                # value directly.
+                - set(attributes["gen_ai.tool.call.result"], ParseJSON(attributes["gcp.vertex.agent.tool_response"])["output"]) where attributes["gcp.vertex.agent.tool_response"] != nil
+                # kagent's "POST /" (otelhttp server span) and "invocation"
+                # (ADK's own turn wrapper) carry no gen_ai.operation.name at
+                # all, so Phoenix's kind inference (which keys off that
+                # attribute) falls through to "unknown" for both. Neither
+                # is an LLM/TOOL/AGENT leaf operation -- CHAIN is
+                # OpenInference's own generic orchestration/wrapper kind.
+                - set(attributes["openinference.span.kind"], "CHAIN") where name == "POST /" or name == "invocation"
       exporters:
         debug: {}
         otlp_grpc/jaeger:
