@@ -48,3 +48,19 @@ spec:
         initialDelaySeconds: 5
         periodSeconds: 5
         failureThreshold: 120
+    # Task 6 optional: the chart defaults auth.enableAuth to true, but this
+    # fork's phoenix.yaml never set up a real admin workflow around it --
+    # nothing ever rotated the admin password deliberately, someone just hit
+    # Phoenix's forced first-login reset once (2026-09-25, confirmed via the
+    # users table: admin@localhost's updated_at is two days after
+    # created_at, reset_password already false) and the real password now
+    # lives only in Postgres, with PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD
+    # permanently stale. Worse: OTLP trace ingestion needs auth too, and
+    # kagent's otel.tracing exporter has no headers field to carry an API
+    # key even if we had one (see releases/kagent.yaml). Disabling auth here
+    # matches this lab's existing posture elsewhere (kagent's own
+    # AUTH_MODE=unsecure default, xray-memory's bare-token-not-RBAC auth)
+    # rather than reimplementing Phoenix's password hashing to recover a
+    # lost admin account.
+    auth:
+      enableAuth: false
