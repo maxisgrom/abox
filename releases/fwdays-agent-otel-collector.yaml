@@ -32,18 +32,19 @@
 #
 # transform/genai_normalize (in values.config.processors below): kagent's
 # underlying ADK runtime (Google's "vertex agent" SDK, otel.scope.name
-# "gcp.vertex.agent" on every LLM span) does carry the actual prompt/
-# response content -- just under its own gcp.vertex.agent.llm_request/
-# llm_response keys (JSON-encoded strings), not the OTel GenAI semantic
-# convention's gen_ai.input.messages/gen_ai.output.messages that Phoenix
-# and MLflow specifically look for to populate their input/output columns.
-# Confirmed live: Jaeger (attribute-agnostic) showed the content fine,
-# Phoenix/MLflow showed "--" for the identical spans. Copying the value
-# across (not reshaping it -- the ADK's JSON shape and Traceloop/
-# OpenLLMetry's don't match) at least gets real content into those columns
-# instead of nothing; it may not render as prettily as a trace that
-# natively uses the standard schema (otel-demo's own agent, via Traceloop,
-# does).
+# "gcp.vertex.agent" on every span) does carry the actual prompt/response/
+# tool content -- just under its own keys, not the OTel GenAI semantic
+# convention names Phoenix and MLflow specifically look for to populate
+# their input/output columns. Two DIFFERENT pairs, by span kind:
+# generate_content spans use gcp.vertex.agent.llm_request/llm_response;
+# execute_tool spans use gcp.vertex.agent.tool_call_args/tool_response
+# instead (confirmed live -- the first fix only covered the LLM pair,
+# Phoenix still showed an empty output column on tool spans since
+# tool_response isn't llm_response). Copying both pairs across (not
+# reshaping them -- the ADK's JSON shape and Traceloop/OpenLLMetry's don't
+# match) at least gets real content into those columns instead of nothing;
+# it may not render as prettily as a trace that natively uses the standard
+# schema (otel-demo's own agent, via Traceloop, does).
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -84,6 +85,16 @@ spec:
               statements:
                 - set(attributes["gen_ai.input.messages"], attributes["gcp.vertex.agent.llm_request"]) where attributes["gcp.vertex.agent.llm_request"] != nil
                 - set(attributes["gen_ai.output.messages"], attributes["gcp.vertex.agent.llm_response"]) where attributes["gcp.vertex.agent.llm_response"] != nil
+                # Tool-execution spans (execute_tool search_graph/get_graph_node/...)
+                # use a THIRD, different attribute pair for the same kind of
+                # content -- confirmed live via Phoenix showing populated
+                # gcp.vertex.agent.tool_response but an empty output column,
+                # since that's neither of the two pairs above. gen_ai.tool.call.
+                # arguments/result is the pair Phoenix/MLflow look for on tool
+                # spans specifically (distinct from gen_ai.input/output.messages,
+                # which are for LLM-generation spans).
+                - set(attributes["gen_ai.tool.call.arguments"], attributes["gcp.vertex.agent.tool_call_args"]) where attributes["gcp.vertex.agent.tool_call_args"] != nil
+                - set(attributes["gen_ai.tool.call.result"], attributes["gcp.vertex.agent.tool_response"]) where attributes["gcp.vertex.agent.tool_response"] != nil
       exporters:
         debug: {}
         otlp_grpc/jaeger:
