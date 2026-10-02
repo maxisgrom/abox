@@ -82,3 +82,32 @@ spec:
             value: "true"
         service:
           port: 5665
+      # Task 7: the agent component (Traceloop/OpenLLMetry-instrumented --
+      # it's this chart's actual GenAI tracing demo) defaults to USE_VCR=true,
+      # replaying a bundled cassette instead of calling a real LLM, so the
+      # demo works with no API key out of the box. That replay path is
+      # broken on this chart version: a type bug inside the vcr library
+      # itself crashes while exporting the agent's own trace (confirmed live
+      # via `kubectl logs` -- TypeError inside vcr/stubs/__init__.py, not
+      # our code, not the LLM call). Point it at a real model instead of
+      # working around the mock. Reuses the OpenRouter key already proven
+      # working for kagent's own ModelConfigs (same base URL, same model),
+      # copied cross-namespace as `otel-demo-agent-llm` by
+      # scripts/lab-bootstrap.sh -- this chart has no secretKeyRef-shaped
+      # values field, but otel-demo.pod.env's $allEnvs list is a raw toYaml
+      # dump (templates/_pod.tpl), so a plain Kubernetes EnvVar `valueFrom`
+      # works here same as any pod spec, unlike kagent's
+      # RemoteMCPServer.headersFrom (which only takes literal strings).
+      agent:
+        envOverrides:
+          - name: LLM_BASE_URL
+            value: "https://openrouter.ai/api/v1"
+          - name: LLM_MODEL
+            value: "google/gemini-2.5-flash"
+          - name: API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: otel-demo-agent-llm
+                key: OPENROUTER_API_KEY
+          - name: USE_VCR
+            value: "False"

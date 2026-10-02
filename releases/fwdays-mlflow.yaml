@@ -1,0 +1,108 @@
+# MLflow Tracking -- https://mlflow.org/docs/latest/genai/tracing/
+#
+# Task 7: a second genAI-tracing backend to compare against Phoenix (wired
+# in Task 6) and the OTel Demo's own bundled Jaeger. Values below are
+# adapted from den-vasyliev/abox's feat/otel-demo branch (releases/mlflow.yaml),
+# which hit and documented several real failures on this exact chart --
+# reused verbatim where the reasoning is generic infra, not triage-specific
+# (this fork has no triage-core, so nothing else from that branch's mlflow
+# setup carries over).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlflow
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: mlflow
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/mlflow/charts/mlflow
+  ref:
+    tag: "0.1.0"
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mlflow
+  namespace: mlflow
+spec:
+  interval: 1h
+  releaseName: mlflow
+  # Chart hardcodes both probes' timeoutSeconds: 1 with no values-level
+  # override -- too tight for a Python/asyncio server under concurrent
+  # trace-ingestion load. Same postRenderer mechanism kagent.yaml uses for
+  # its version-label fix.
+  postRenderers:
+    - kustomize:
+        patches:
+          - patch: |
+              - op: replace
+                path: /spec/template/spec/containers/0/livenessProbe/timeoutSeconds
+                value: 5
+              - op: replace
+                path: /spec/template/spec/containers/0/livenessProbe/failureThreshold
+                value: 5
+              - op: replace
+                path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
+                value: 5
+              - op: replace
+                path: /spec/template/spec/containers/0/readinessProbe/failureThreshold
+                value: 5
+            target:
+              kind: Deployment
+              labelSelector: app.kubernetes.io/name=mlflow
+  chartRef:
+    kind: OCIRepository
+    name: mlflow
+    namespace: flux-system
+  install:
+    createNamespace: true
+  values:
+    # No external Postgres or object store in this lab: SQLite backend store
+    # and server-proxied artifacts both land on one PVC. The chart requires
+    # backendStoreUri (or backendStoreUriFrom) or the Deployment template
+    # fails to render at all.
+    storage:
+      enabled: true
+    mlflow:
+      backendStoreUri: "sqlite:////mlflow/mlflow.db"
+      defaultArtifactRoot: "mlflow-artifacts:/"
+      artifactsDestination: "/mlflow/artifacts"
+    server:
+      flag_options:
+        - serve_artifacts
+      # DNS-rebinding guard (mlflow.server.fastapi_security), on since 3.14.
+      # Default allowlist is localhost + private IPs by literal address, not
+      # by hostname -- the otel-demo collector will call this Service by its
+      # cluster DNS name, which 403s ("Rejected request with invalid Host
+      # header") without an explicit entry. Every entry needs a bare form
+      # AND a ":*" form: is_allowed_host_header does `host == allowed`
+      # unless the allowed entry itself contains "*" (then fnmatch'd), and
+      # the incoming Host header always carries the port.
+      value_options:
+        allowed-hosts: "mlflow-mlflow.mlflow.svc.cluster.local,mlflow-mlflow.mlflow.svc.cluster.local:*,localhost,localhost:*,127.0.0.1,127.0.0.1:*"
+        # `mlflow server --workers=N` is a bare `uvicorn --workers N
+        # mlflow.server.fastapi_app:app` underneath -- each worker is its
+        # own process with its own asyncio event loop, and /health shares
+        # that loop with /v1/traces ingestion. At workers=1 a synchronous
+        # SQLite write stalling that loop stalls /health right along with
+        # it, and kubelet kills the pod on the next missed liveness check.
+        # workers=2 so a slow request on one process can't take the health
+        # check down with it.
+        workers: 2
+    # No resources block by default leaves the pod BestEffort QoS, first in
+    # line to be CPU-starved. The chart exposes no probe-tuning values to
+    # compensate, so a real floor plus enough worker processes (above) are
+    # the only levers. 2Gi because the -full image's per-worker footprint
+    # (sklearn/torch/etc all importable) is bigger than it looks.
+    resources:
+      requests:
+        cpu: 250m
+        memory: 768Mi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+    # kubectl port-forward -n mlflow svc/mlflow-mlflow 5000:5000
