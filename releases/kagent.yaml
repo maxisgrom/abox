@@ -108,6 +108,26 @@ spec:
             endpoint: "fwdays-agent-otel-collector.kagent.svc.cluster.local:4317"
             protocol: "grpc"
             insecure: true
+      # kagent-controller's own spans (the "received this A2A request" hop,
+      # distinct from each Agent pod's own spans) never exported at all --
+      # confirmed live via `kubectl logs`: "traces export: ... invalid
+      # target address "": missing address". The chart's configmap
+      # template only emits a unified OTEL_EXPORTER_OTLP_ENDPOINT when
+      # tracing and logging endpoints are both set AND equal; leaving
+      # logging.exporter.otlp.endpoint empty forced the split
+      # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT path instead, which the
+      # controller's own process apparently never reads (unlike each Agent
+      # pod, which does). Setting the same endpoint here -- logging itself
+      # stays disabled (enabled defaults to false, not touched) -- flips
+      # the template to the unified branch without actually turning on log
+      # export. Symptom this caused: router-agent-fwdays's own child span
+      # had a parent_span_id pointing at the controller's never-exported
+      # span, so Jaeger (and anything downstream of it) showed "parent span
+      # ID ... is not in the trace".
+      logging:
+        exporter:
+          otlp:
+            endpoint: "fwdays-agent-otel-collector.kagent.svc.cluster.local:4317"
 ---
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant

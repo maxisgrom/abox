@@ -29,6 +29,21 @@
 #
 # Reuses the open-telemetry HelmRepository releases/fwdays-otel-demo.yaml
 # already declares in flux-system rather than redeclaring it.
+#
+# transform/genai_normalize (in values.config.processors below): kagent's
+# underlying ADK runtime (Google's "vertex agent" SDK, otel.scope.name
+# "gcp.vertex.agent" on every LLM span) does carry the actual prompt/
+# response content -- just under its own gcp.vertex.agent.llm_request/
+# llm_response keys (JSON-encoded strings), not the OTel GenAI semantic
+# convention's gen_ai.input.messages/gen_ai.output.messages that Phoenix
+# and MLflow specifically look for to populate their input/output columns.
+# Confirmed live: Jaeger (attribute-agnostic) showed the content fine,
+# Phoenix/MLflow showed "--" for the identical spans. Copying the value
+# across (not reshaping it -- the ADK's JSON shape and Traceloop/
+# OpenLLMetry's don't match) at least gets real content into those columns
+# instead of nothing; it may not render as prettily as a trace that
+# natively uses the standard schema (otel-demo's own agent, via Traceloop,
+# does).
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -62,6 +77,13 @@ spec:
       zipkin:
         enabled: false
     config:
+      processors:
+        transform/genai_normalize:
+          trace_statements:
+            - context: span
+              statements:
+                - set(attributes["gen_ai.input.messages"], attributes["gcp.vertex.agent.llm_request"]) where attributes["gcp.vertex.agent.llm_request"] != nil
+                - set(attributes["gen_ai.output.messages"], attributes["gcp.vertex.agent.llm_response"]) where attributes["gcp.vertex.agent.llm_response"] != nil
       exporters:
         debug: {}
         otlp_grpc/jaeger:
@@ -92,6 +114,10 @@ spec:
           traces:
             receivers:
               - otlp
+            processors:
+              - memory_limiter
+              - transform/genai_normalize
+              - batch
             exporters:
               - debug
               - otlp_grpc/jaeger
