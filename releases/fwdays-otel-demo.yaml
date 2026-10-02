@@ -111,3 +111,47 @@ spec:
                 key: OPENROUTER_API_KEY
           - name: USE_VCR
             value: "False"
+    # Task 7: fan the same traces this chart's own collector already sends
+    # to its bundled Jaeger out to Phoenix and MLflow too, so one real
+    # interaction (the agent's GenAI workflow above, plus everything else)
+    # is comparable side by side across all three o11y solutions instead of
+    # three disconnected samples. Chart default exporters list is
+    # [otlp_grpc/jaeger, debug, span_metrics] (values.yaml's
+    # service.pipelines.traces) -- Helm replaces lists wholesale rather than
+    # merging them, so the override below repeats those three verbatim
+    # alongside the two new ones; `processors` is a sibling map key and
+    # stays at chart default untouched.
+    opentelemetry-collector:
+      config:
+        exporters:
+          # MLflow's tracking server only accepts OTLP/HTTP at POST
+          # /v1/traces -- gRPC ingestion isn't implemented
+          # (mlflow.org/docs/latest/genai/tracing/opentelemetry/ingest/,
+          # confirmed 2026-09-21 per den-vasyliev/abox's own otel-demo
+          # branch). x-mlflow-experiment-id routes spans into the
+          # "otel-demo" experiment (id "1", created once via POST
+          # /api/2.0/mlflow/experiments/create -- not deterministic, redo
+          # that call and update this if the mlflow-mlflow PVC is ever
+          # wiped).
+          otlphttp/mlflow:
+            endpoint: http://mlflow-mlflow.mlflow.svc.cluster.local:5000
+            tls:
+              insecure: true
+            headers:
+              x-mlflow-experiment-id: "1"
+          # Same Phoenix OTLP receiver kagent's otel.tracing already targets
+          # (releases/kagent.yaml) -- unauthenticated since Task 6
+          # (releases/phoenix.yaml, auth.enableAuth: false).
+          otlp_grpc/phoenix:
+            endpoint: phoenix-svc.phoenix.svc.cluster.local:4317
+            tls:
+              insecure: true
+        service:
+          pipelines:
+            traces:
+              exporters:
+                - otlp_grpc/jaeger
+                - debug
+                - span_metrics
+                - otlphttp/mlflow
+                - otlp_grpc/phoenix
