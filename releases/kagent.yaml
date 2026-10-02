@@ -88,6 +88,22 @@ spec:
       default: openAI
       openAI:
         apiKey: OPENAI_API_KEY
+    # Task 6 optional: kagent ships this block disabled with an empty endpoint
+    # by default -- Phoenix has been deployed since Task 3 as "traces & evals"
+    # but nothing was ever pointed at it, so it sat empty. Point agent traces
+    # at Phoenix's existing OTLP receiver (same namespace-crossing pattern as
+    # xray-memory's RemoteMCPServer, just a plain Service this time -- no
+    # secretKeyRef limitation to work around, Phoenix's OTLP port takes no
+    # auth). insecure: true because this is plaintext in-cluster gRPC, no TLS
+    # cert on phoenix-svc.
+    otel:
+      tracing:
+        enabled: true
+        exporter:
+          otlp:
+            endpoint: "phoenix-svc.phoenix.svc.cluster.local:4317"
+            protocol: "grpc"
+            insecure: true
 ---
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
