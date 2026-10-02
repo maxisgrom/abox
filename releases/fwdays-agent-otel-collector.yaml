@@ -1,0 +1,99 @@
+# Task 7: a fan-out collector for OUR OWN agents' traces -- kagent's and
+# voice-agent-fwdays's -- distinct from releases/fwdays-otel-demo.yaml's
+# bundled collector, which only sees the Astronomy Shop demo's own traffic.
+#
+# Why this exists at all: kagent's otel.tracing (releases/kagent.yaml) and
+# a plain app like voice-agent-fwdays can each only target ONE OTLP
+# endpoint, with no headers field in kagent's values schema regardless of
+# protocol (confirmed: releases/kagent.yaml's otel.tracing.exporter.otlp has
+# endpoint/protocol/insecure/timeout, nothing else). Getting the SAME trace
+# into Phoenix with its own project, MLflow with its own experiment, and a
+# generic Jaeger view all at once needs something in between that CAN set
+# per-destination headers -- this collector is that something. Everything
+# arriving here is already "ours" (no triage-core-style multi-tenant split
+# needed), so no routing connector: one receiver, one straight fan-out to
+# three exporters.
+#
+# Jaeger destination reuses releases/fwdays-otel-demo.yaml's own bundled
+# Jaeger rather than standing up a second one -- it's a general-purpose
+# trace store, nothing stops it holding both the demo's services and ours,
+# distinguished by service.name same as any real shared Jaeger would be.
+#
+# Phoenix gets OTLP/HTTP (not the :4317 gRPC port the astronomy shop's own
+# collector and kagent both already use), specifically to carry the
+# x-project-name header (found in phoenix's own
+# server/api/routers/v1/traces.py -- resolution order #1, HTTP-path only)
+# so these traces land in their own "fwdays-agents" project instead of
+# mixing into the "default" one otel-demo's traffic and kagent's direct
+# Phoenix traces already share.
+#
+# Reuses the open-telemetry HelmRepository releases/fwdays-otel-demo.yaml
+# already declares in flux-system rather than redeclaring it.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: fwdays-agent-otel-collector
+  namespace: kagent
+spec:
+  interval: 1h
+  releaseName: fwdays-agent-otel-collector
+  chart:
+    spec:
+      chart: opentelemetry-collector
+      version: "0.173.1"
+      sourceRef:
+        kind: HelmRepository
+        name: open-telemetry
+        namespace: flux-system
+  install:
+    createNamespace: true
+  values:
+    mode: deployment
+    fullnameOverride: fwdays-agent-otel-collector
+    image:
+      repository: otel/opentelemetry-collector-contrib
+    ports:
+      jaeger-compact:
+        enabled: false
+      jaeger-thrift:
+        enabled: false
+      jaeger-grpc:
+        enabled: false
+      zipkin:
+        enabled: false
+    config:
+      exporters:
+        debug: {}
+        otlp_grpc/jaeger:
+          endpoint: jaeger.otel-demo.svc.cluster.local:4317
+          tls:
+            insecure: true
+        otlphttp/phoenix:
+          endpoint: http://phoenix-svc.phoenix.svc.cluster.local:6006
+          tls:
+            insecure: true
+          headers:
+            x-project-name: fwdays-agents
+        otlphttp/mlflow:
+          endpoint: http://mlflow-mlflow.mlflow.svc.cluster.local:5000
+          tls:
+            insecure: true
+          headers:
+            # experiment id "2", created once via POST
+            # /api/2.0/mlflow/experiments/create (name: "fwdays-agents").
+            # Not deterministic -- redo that call and update this if the
+            # mlflow-mlflow PVC is ever wiped.
+            x-mlflow-experiment-id: "2"
+      receivers:
+        jaeger: null
+        zipkin: null
+      service:
+        pipelines:
+          traces:
+            receivers:
+              - otlp
+            exporters:
+              - debug
+              - otlp_grpc/jaeger
+              - otlphttp/phoenix
+              - otlphttp/mlflow

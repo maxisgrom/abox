@@ -27,3 +27,4 @@ resources:
   - fwdays-news-mcp-server.yaml
   - fwdays-otel-demo.yaml
   - fwdays-mlflow.yaml
+  - fwdays-agent-otel-collector.yaml

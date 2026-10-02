@@ -45,7 +45,7 @@ spec:
     spec:
       containers:
         - name: voice-agent-fwdays
-          image: ghcr.io/maxisgrom/fwdays-harness-engineering/voice-agent-fwdays:2026-09-26f
+          image: ghcr.io/maxisgrom/fwdays-harness-engineering/voice-agent-fwdays:2026-10-02a
           ports:
             - containerPort: 8080
           env:
@@ -58,6 +58,16 @@ spec:
             # (gemini-3.8-live; kagent-controller.kagent:8083's A2A endpoint
             # for router-agent-fwdays) -- override here only if either needs
             # to change without a new image.
+            # Task 7: OTLPSpanExporter() in app.py reads this directly, no
+            # OTEL_SERVICE_NAME needed (hardcoded in the Resource there --
+            # this pod only ever has one identity). Same bridge collector
+            # kagent's own otel.tracing now targets
+            # (releases/kagent.yaml) -- the W3C traceparent header
+            # opentelemetry-instrumentation-httpx injects on the
+            # delegate_to_cluster call means router-agent-fwdays's own trace
+            # continues this one rather than starting a disconnected one.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://fwdays-agent-otel-collector.kagent.svc.cluster.local:4317"
           readinessProbe:
             httpGet: { path: /healthz, port: 8080 }
             initialDelaySeconds: 3

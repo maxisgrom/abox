@@ -90,18 +90,22 @@ spec:
         apiKey: OPENAI_API_KEY
     # Task 6 optional: kagent ships this block disabled with an empty endpoint
     # by default -- Phoenix has been deployed since Task 3 as "traces & evals"
-    # but nothing was ever pointed at it, so it sat empty. Point agent traces
-    # at Phoenix's existing OTLP receiver (same namespace-crossing pattern as
-    # xray-memory's RemoteMCPServer, just a plain Service this time -- no
-    # secretKeyRef limitation to work around, Phoenix's OTLP port takes no
-    # auth). insecure: true because this is plaintext in-cluster gRPC, no TLS
-    # cert on phoenix-svc.
+    # but nothing was ever pointed at it, so it sat empty.
+    #
+    # Task 7: repointed from Phoenix directly to
+    # fwdays-agent-otel-collector.yaml's bridge collector instead. kagent's
+    # otel.tracing schema has no headers field (confirmed: endpoint/
+    # protocol/insecure/timeout, nothing else), so it can't carry Phoenix's
+    # x-project-name or MLflow's x-mlflow-experiment-id itself -- the bridge
+    # collector does that fan-out instead, landing the same traces in
+    # Phoenix's "fwdays-agents" project, MLflow's "fwdays-agents"
+    # experiment, AND the otel-demo chart's own Jaeger, all at once.
     otel:
       tracing:
         enabled: true
         exporter:
           otlp:
-            endpoint: "phoenix-svc.phoenix.svc.cluster.local:4317"
+            endpoint: "fwdays-agent-otel-collector.kagent.svc.cluster.local:4317"
             protocol: "grpc"
             insecure: true
 ---
