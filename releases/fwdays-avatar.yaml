@@ -45,7 +45,7 @@ spec:
     spec:
       containers:
         - name: avatar-fwdays
-          image: ghcr.io/maxisgrom/fwdays-harness-engineering/avatar-fwdays:2026-10-03b
+          image: ghcr.io/maxisgrom/fwdays-harness-engineering/avatar-fwdays:2026-10-03c
           ports:
             - containerPort: 3000
           env:
@@ -61,6 +61,13 @@ spec:
             # Dockerfile in fwdays-harness-engineering). Currently baked in as
             # the custom avatar 72c6448e-9502-4f55-a0ba-37aef45eaa30.
             # MEMORY_AGENT_A2A_URL left at the app's own in-cluster default.
+            # Task 7: lib/tracing.ts's OTLPTraceExporter() reads this
+            # directly, no OTEL_SERVICE_NAME needed (hardcoded in the
+            # Resource there -- this pod only ever has one identity). Same
+            # bridge collector kagent's own otel.tracing and voice-agent-
+            # fwdays already target.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://fwdays-agent-otel-collector.kagent.svc.cluster.local:4317"
           readinessProbe:
             httpGet: { path: /api/healthz, port: 3000 }
             initialDelaySeconds: 5
