@@ -84,10 +84,37 @@ spec:
       enabled: false
     cilium-debug-agent:
       enabled: false
+    # providers.openAI.apiKey is deliberately UNSET (not empty-string, not
+    # present at all). The chart's modelconfig-secret.yaml template only
+    # creates/owns the kagent-openai Secret when apiKeySecretRef AND apiKey
+    # are both truthy -- this fork had apiKey set to the literal string
+    # "OPENAI_API_KEY" (indistinguishable from the chart's own shipped
+    # placeholder at a glance), so the chart recreated that Secret from the
+    # placeholder on EVERY Helm upgrade, silently undoing
+    # scripts/lab-bootstrap.sh's out-of-band patch each time. Confirmed
+    # live 2026-10-02: every kagent.yaml edit this Task 7 session (otel
+    # wiring, then the otel fix) re-broke OpenRouter auth for every agent on
+    # default-model-config, not just once. Leaving apiKey unset makes the
+    # chart treat kagent-openai as purely externally managed -- it still
+    # references the Secret via apiKeySecretRef for the ModelConfig, it just
+    # never creates or touches it. lab-bootstrap.sh now creates/updates it
+    # directly (kubectl apply, not patch) instead of relying on the chart
+    # to have made it first.
     providers:
       default: openAI
+      # model/baseUrl are non-sensitive config, declared here instead of as
+      # an out-of-band `kubectl patch modelconfig default-model-config` --
+      # confirmed live that every one of this session's kagent.yaml edits
+      # re-rendered default-model-config from the chart's own
+      # providers.openAI.model (gpt-4.1-mini, no baseUrl) and reverted the
+      # patch, exactly the same disease as the apiKey Secret above. Only the
+      # actual credential (apiKeySecretRef's Secret) stays out-of-band --
+      # apiKey itself is deliberately absent (see above).
       openAI:
-        apiKey: OPENAI_API_KEY
+        model: "google/gemini-2.5-flash"
+        config:
+          baseUrl: "https://openrouter.ai/api/v1"
+          temperature: "0"
     # Task 6 optional: kagent ships this block disabled with an empty endpoint
     # by default -- Phoenix has been deployed since Task 3 as "traces & evals"
     # but nothing was ever pointed at it, so it sat empty.
