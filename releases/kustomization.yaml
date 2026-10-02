@@ -25,3 +25,4 @@ resources:
   - fwdays-voice-agent.yaml
   - fwdays-avatar.yaml
   - fwdays-news-mcp-server.yaml
+  - fwdays-otel-demo.yaml
