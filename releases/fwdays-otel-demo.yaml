@@ -28,17 +28,20 @@
 # /telemetry/ (Jaeger UI on OTel demo < 0.41 served under /jaeger/, this
 # chart's NOTES.txt is the source of truth if the path moves), /feature/.
 #
-# No /loadgen by default: the chart's component.load-generator.env pins
-# LOCUST_HEADLESS: "true", unlike docker-compose's LOCUST_HEADLESS=false, so
-# upstream's screenshots of a Locust UI are docker-compose-only unless
-# overridden. Overridden here via envOverrides (merged onto the chart's env
+# No load-generator UI by default: the chart renders no Service for it at
+# all (no .service block, no .ports). o11y note: 0.41.2's
+# component.load-generator.env still ships the full Locust env block
+# (LOCUST_HOST/HEADLESS/AUTOSTART/USERS) alongside k6's -- but the image
+# actually run is k6 (confirmed live: pod logs show k6 "browser"/"load"
+# scenario output, not a Locust process), so overriding LOCUST_HEADLESS here
+# does nothing. The Locust vars are vestigial, left over from before this
+# component moved to k6. Use k6's own web dashboard instead
+# (https://grafana.com/docs/k6/latest/results-output/web-dashboard/),
+# default port 5665, enabled via envOverrides (merged onto the chart's env
 # by name, not a wholesale replacement -- see the chart's
-# otel-demo.envOverriden helper) plus a service.port so the chart renders a
-# Service at all (load-generator gets none by default: no .service block, no
-# .ports). Locust's own default web port is 8089, unset here same as
-# upstream, so the two line up:
+# otel-demo.envOverriden helper) plus a matching service.port:
 #
-#   kubectl port-forward -n otel-demo svc/load-generator 8089:8089
+#   kubectl port-forward -n otel-demo svc/load-generator 5665:5665
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -75,7 +78,7 @@ spec:
     components:
       load-generator:
         envOverrides:
-          - name: LOCUST_HEADLESS
-            value: "false"
+          - name: K6_WEB_DASHBOARD
+            value: "true"
         service:
-          port: 8089
+          port: 5665
