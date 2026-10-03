@@ -81,32 +81,54 @@ spec:
       still in your own conversation history. A specialist's earlier answer
       can be stale or about a different topic entirely; re-delegate instead
       of reusing it.
+    # isolateSessions: true on every Agent-type tool below -- confirmed
+    # live (kubectl explain agent.spec.declarative.tools.isolateSessions)
+    # that the DEFAULT (unset/false) makes every call this router makes to
+    # a given sub-agent reuse the SAME A2A context_id across completely
+    # unrelated top-level callers/sessions, not just within one
+    # conversation. Confirmed in Phoenix: a brand-new voice session's very
+    # first question about Kyiv got "I already told you about that" back
+    # from news-agent-fwdays, because an earlier, totally unrelated test
+    # call's own Kyiv search was still sitting in that ONE shared
+    # sub-agent session. true mints a fresh context_id per call instead.
+    # Per the same CRD doc comment, this does NOT break legitimate
+    # cross-turn continuity within one real conversation -- that rides a
+    # separate x-kagent-root-context-id header, unaffected by this flag --
+    # and doesn't fragment Phoenix sessions either, confirmed live: Phoenix
+    # groups a trace by its ROOT span's session id (the router's own A2A
+    # contextId), not by whatever a deeply nested sub-agent-as-tool span's
+    # own session id happens to be.
     tools:
     - type: Agent
+      isolateSessions: true
       agent:
         apiGroup: kagent.dev
         kind: Agent
         name: k8s-agent
         namespace: kagent
     - type: Agent
+      isolateSessions: true
       agent:
         apiGroup: kagent.dev
         kind: Agent
         name: retrieval-agent-fwdays
         namespace: kagent
     - type: Agent
+      isolateSessions: true
       agent:
         apiGroup: kagent.dev
         kind: Agent
         name: memory-agent-fwdays
         namespace: kagent
     - type: Agent
+      isolateSessions: true
       agent:
         apiGroup: kagent.dev
         kind: Agent
         name: news-agent-fwdays
         namespace: kagent
     - type: Agent
+      isolateSessions: true
       agent:
         apiGroup: kagent.dev
         kind: Agent
