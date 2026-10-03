@@ -69,6 +69,12 @@ spec:
       asks for a comparison across several. State which specialist(s) you
       delegated to before giving the answer. If no specialist obviously
       fits, say so rather than guessing or answering from general knowledge.
+
+      Every question, even an apparent follow-up, gets its own fresh
+      delegation call -- never answer from a previous specialist's response
+      still in your own conversation history. A specialist's earlier answer
+      can be stale or about a different topic entirely; re-delegate instead
+      of reusing it.
     tools:
     - type: Agent
       agent:

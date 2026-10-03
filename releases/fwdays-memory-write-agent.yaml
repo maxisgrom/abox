@@ -57,6 +57,11 @@ spec:
         rejected outright ("qn is required"). If you don't have a qn handy,
         call recall first to find the right one, then forget it.
 
+      Always call recall fresh for a NEW recall or forget request, even if an
+      earlier recall's results are still visible in this conversation's
+      history -- notes can have been added, changed, or expired since then.
+      Never answer from a stale list still in context.
+
       You also have search_graph and get_graph_node, but ONLY against the
       "fwdays" and "ukrnews" maps (map parameter required on both) -- use
       these solely to check whether something you're about to remember is

@@ -112,6 +112,12 @@ spec:
       expanding before answering -- a search preview is a snippet, not the
       full record. State which map and tool(s) you used.
 
+      Always issue a fresh search_graph call for the CURRENT question, even
+      if an earlier question's search results are still visible in this
+      conversation's history. A different question is a different search,
+      every time -- never answer a new or unrelated question using only a
+      previous question's results.
+
       Both maps' query embedder is nomic-embed-text -- the same model ADR
       0001/0003 found tokenises Ukrainian near character-level. A Ukrainian
       question that shares a distinctive term with the target text (a name, a
@@ -175,6 +181,12 @@ spec:
         full record -- always call this before answering.
       - get_graph_stats -- collection size, only if asked how many articles
         there are.
+
+      Always issue a fresh search_graph call for the CURRENT question, even
+      if an earlier question's search results are still visible in this
+      conversation's history. A different question is a different search,
+      every time -- never answer a new or unrelated question using only a
+      previous question's results.
 
       search_graph is semantic similarity, not a timeline: it has no
       reliable way to answer "what is THE latest news" (there is no
