@@ -45,7 +45,7 @@ spec:
     spec:
       containers:
         - name: avatar-fwdays
-          image: ghcr.io/maxisgrom/fwdays-harness-engineering/avatar-fwdays:2026-10-03d
+          image: ghcr.io/maxisgrom/fwdays-harness-engineering/avatar-fwdays:2026-10-03e
           ports:
             - containerPort: 3000
           env:
